@@ -4,25 +4,29 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 
 if __name__=="__main__":
-    print("launching first run")
-    strategy = Strategy(
-        initial_price=100.0,
-        volatility=2,
-        time_step=0.005,
-        time_horizon=1.0,
-        strategy='inventory',
-        with_trading=True,
-        wealth=1000,
-        risk_aversion=0.1,
-        inventory=0,
-        price_impact_model='logarithmic',
-        k=1.5,
-        A=140
-    )
-    strategy.run() # Example for running a full trajectory with the exact same model as in the paper
-    strategy.plot_trade_history(save_fig=True,show_fig=True,save_path="tests/first_run.png",fig_name="First Run Trade History with gamma=0.1")
-
-    print("launching the animated version of the first run")
+    print("launching script")
+    gammas = [0.01, 0.1, 0.5, 1.0]
+    reservation_prices = [[] for _ in gammas]
+    midprices = [[] for _ in gammas]
+    for i,gamma in enumerate(gammas):
+        strategy = Strategy(
+            initial_price=100.0,
+            volatility=2,
+            time_step=0.005,
+            time_horizon=1.0,
+            strategy='inventory',
+            with_trading=True,
+            wealth=1000,
+            risk_aversion=gamma,
+            inventory=0,
+            price_impact_model='logarithmic',
+            k=1.5,
+            A=140,
+            seed=42
+        )
+        strategy.run() # Example for running a full trajectory with the exact same model as in the paper
+        
+    """print("launching the animated version of the first run")
     strategy.reset()
 
     fig, ax = plt.subplots(figsize=(12, 6))
@@ -76,5 +80,4 @@ if __name__=="__main__":
         fig, update, frames=n_frames, init_func=init, blit=True, interval=50, repeat=False
     )
 
-    plt.show()
-    plt.savefig("tests/first_run_animated.png")
+    plt.show()"""

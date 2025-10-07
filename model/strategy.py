@@ -48,7 +48,9 @@ class Strategy:
 
         self.trade_history = {"ask":[], "bid":[],"midprice":[]}
         self.inventory_history = []
-        
+        if "seed" in kwargs:
+            random.seed(kwargs["seed"])
+            np.random.seed(kwargs["seed"])
         self.kwargs = kwargs    
 
     def compute_spread(self):
