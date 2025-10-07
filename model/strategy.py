@@ -46,7 +46,7 @@ class Strategy:
         self.with_trading = kwargs.get('with_trading',True)
         self.price_impact_model = kwargs.get('price_impact_model','logarithmic')
 
-        self.trade_history = {"ask":[], "bid":[],"midprice":[]}
+        self.trade_history = {"ask":[], "bid":[],"midprice":[],"reservation_price":[]}
         self.inventory_history = []
         if "seed" in kwargs:
             random.seed(kwargs["seed"])
@@ -76,14 +76,15 @@ class Strategy:
         spread = self.compute_spread()
         optimal_ask = reservation_price + spread / 2
         optimal_bid = reservation_price - spread / 2
-        return optimal_bid, optimal_ask
+        return optimal_bid, optimal_ask,reservation_price
     
     def step(self):
         """Advance the model by one time step."""
         if self.current_time >= self.time_horizon:
             print("Warning: current time is already at or past the time horizon. No further steps can be taken.")
             return
-        optimal_bid, optimal_ask = self.compute_optimal_quotes()
+        optimal_bid, optimal_ask, reservation_price= self.compute_optimal_quotes()
+        self.trade_history["reservation_price"].append((self.current_time,reservation_price))
         delta_a,delta_b = optimal_ask - self.midprice_model.current_price, self.midprice_model.current_price - optimal_bid
         p_a = self.arrival_model.compute_arrival_probability(delta_a)
         p_b = self.arrival_model.compute_arrival_probability(delta_b)
@@ -118,7 +119,7 @@ class Strategy:
         self.inventory = self.utility_model.inventory
         self.wealth = self.utility_model.wealth
         self.current_time = 0.0
-        self.trade_history = {"ask":[], "bid":[],"midprice":[]}
+        self.trade_history = {"ask":[], "bid":[],"midprice":[],"reservation_price":[]}
         self.inventory_history = []
 
     def run(self):

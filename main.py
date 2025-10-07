@@ -5,10 +5,11 @@ from matplotlib.animation import FuncAnimation
 
 if __name__=="__main__":
     print("launching script")
-    gammas = [0.01, 0.1, 0.5, 1.0]
-    reservation_prices = [[] for _ in gammas]
-    midprices = [[] for _ in gammas]
+    gammas = [0.0001,0.001,0.01,0.05, 0.1, 0.5, 0.8]
+    reservation_prices = []
+    midprices = []
     for i,gamma in enumerate(gammas):
+        print(f"Running simulation with gamma={gamma}")
         strategy = Strategy(
             initial_price=100.0,
             volatility=2,
@@ -25,7 +26,26 @@ if __name__=="__main__":
             seed=42
         )
         strategy.run() # Example for running a full trajectory with the exact same model as in the paper
-        
+        if i ==0: 
+            midprices=[p for _,p in strategy.trade_history["midprice"]]
+        reservation_prices.append([p for _,p in strategy.trade_history["reservation_price"]])
+    # Plotting all the runs on the same graph
+    time = [t for t,_ in strategy.trade_history["midprice"]]
+    plt.figure(figsize=(12, 6))
+    avg_distances = []
+    for i, gamma in enumerate(gammas):
+        distances = np.abs(np.array(reservation_prices[i]) - np.array(midprices))
+        avg_distance = np.mean(distances)
+        avg_distances.append(avg_distance)
+
+    plt.bar([str(gamma) for gamma in gammas], avg_distances)
+    plt.xlabel('Gamma (Risk Aversion)')
+    plt.ylabel('Average Distance (Reservation Price - Midprice)')
+    plt.title('Average Distance for Different Risk Aversions')
+    plt.grid(True, axis='y', alpha=0.3)
+    plt.tight_layout()
+    plt.savefig("tests/average_distance_vs_gamma.png")
+    plt.show()
     """print("launching the animated version of the first run")
     strategy.reset()
 
