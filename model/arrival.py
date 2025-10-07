@@ -45,6 +45,6 @@ class ArrivalModel:
         
         self.lambda_calculation(delta)
         p = self.lambda_ * self.dt
-        assert 0 <= p <= 1, "Arrival probability must be between 0 and 1"
+        assert 0 <= p <= 1, f"Arrival probability must be between 0 and 1 here it is {p}"
 
         return p
