@@ -24,11 +24,11 @@ class Strategy:
             midprice=self.midprice_model,
             wealth=kwargs.get('wealth',1000),
             risk_aversion=kwargs.get('risk_aversion',0.1),
-            inventory=kwargs.get('inventory',0)
+            inventory=kwargs.get('inventory',0),
+            price_impact_model=kwargs.get('price_impact_model','logarithmic')
         )
         
         self.arrival_model = ArrivalModel(
-            price_impact_model=kwargs.get('price_impact_model','logarithmic'),
             dt=self.midprice_model.dt,
             **kwargs
         )
@@ -48,7 +48,9 @@ class Strategy:
 
         self.trade_history = {"ask":[], "bid":[],"midprice":[]}
         self.inventory_history = []
-        
+        if "seed" in kwargs:
+            random.seed(kwargs["seed"])
+            np.random.seed(kwargs["seed"])
         self.kwargs = kwargs    
 
     def compute_spread(self):
@@ -116,7 +118,7 @@ class Strategy:
         self.inventory = self.utility_model.inventory
         self.wealth = self.utility_model.wealth
         self.current_time = 0.0
-        self.trade_history = {"ask":[], "bid":[]}
+        self.trade_history = {"ask":[], "bid":[],"midprice":[]}
         self.inventory_history = []
 
     def run(self):
@@ -124,3 +126,34 @@ class Strategy:
         self.reset()
         while self.current_time < self.time_horizon:
             self.step()
+
+    def plot_trade_history(self, show_fig=True, save_fig=False, save_path="trade_history.png",fig_name="Trade History"):
+        assert len(self.trade_history["ask"]) > 0, "No trade history to plot. Please run the model first."
+
+        import matplotlib.pyplot as plt
+
+        ask_times, ask_prices, ask_status = zip(*self.trade_history["ask"])
+        bid_times, bid_prices, bid_status = zip(*self.trade_history["bid"])
+        midprice_times, midprices = zip(*self.trade_history["midprice"])
+
+        # Compute reservation prices as simple average of bid and ask
+        reservation_prices = [(a + b) / 2 for a, b in zip(ask_prices, bid_prices)]
+
+        plt.figure(figsize=(12, 6))
+        plt.plot(midprice_times, midprices, label='Midprice', color='black', linewidth=2, alpha=0.7)
+        plt.plot(ask_times, reservation_prices, label='Reservation Price', color='green', linewidth=1.5, linestyle='--', alpha=0.8)
+        plt.plot(ask_times, ask_prices, label='Ask Price', color='red', linewidth=1, alpha=0.6)
+        plt.plot(bid_times, bid_prices, label='Bid Price', color='blue', linewidth=1, alpha=0.6)
+        plt.xlabel('Time', fontsize=12)
+        plt.ylabel('Price', fontsize=12)
+        plt.title(fig_name, fontsize=14, fontweight='bold')
+        plt.legend(loc='best', fontsize=10)
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+
+        if save_fig:
+            plt.savefig(save_path)
+        if show_fig:
+            plt.show()
+        plt.close()
+
