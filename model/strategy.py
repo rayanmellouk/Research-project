@@ -37,7 +37,7 @@ class Strategy:
         self.time_step = self.midprice_model.dt
         self.current_time = 0.0
         self.number_of_steps = self.midprice_model.number_of_steps
-        
+
         self.inventory = self.utility_model.inventory
         self.wealth = self.utility_model.wealth
         self.risk_aversion = self.utility_model.risk_aversion
@@ -46,7 +46,7 @@ class Strategy:
         self.with_trading = kwargs.get('with_trading',True)
         self.price_impact_model = kwargs.get('price_impact_model','logarithmic')
 
-        self.trade_history = {"ask":[], "bid":[]}
+        self.trade_history = {"ask":[], "bid":[],"midprice":[]}
         self.inventory_history = []
         
         self.kwargs = kwargs    
@@ -104,6 +104,7 @@ class Strategy:
         else:
             self.trade_history["bid"].append((self.current_time, optimal_bid,"no lift"))
         self.inventory_history.append((self.current_time,self.inventory))
+        self.trade_history["midprice"].append((self.current_time,self.midprice_model.current_price))
         self.midprice_model.step()
         self.current_time = self.midprice_model.current_time
 
@@ -117,3 +118,9 @@ class Strategy:
         self.current_time = 0.0
         self.trade_history = {"ask":[], "bid":[]}
         self.inventory_history = []
+
+    def run(self):
+        """Run the model from the initial time until the time horizon is reached."""
+        self.reset()
+        while self.current_time < self.time_horizon:
+            self.step()
