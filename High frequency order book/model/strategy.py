@@ -158,3 +158,25 @@ class Strategy:
             plt.show()
         plt.close()
 
+
+    def plot_inventory_history(self, show_fig=True, save_fig=False, save_path="inventory_history.png",fig_name="Inventory History"):
+        assert len(self.inventory_history) > 0, "No trade history to plot. Please run the model first."
+
+        import matplotlib.pyplot as plt
+
+        inventory_times, inventory = zip(*self.inventory_history)
+
+        plt.figure(figsize=(12, 6))
+        plt.plot(inventory_times, inventory, label='Inventory', color='orange', linewidth=1.5, alpha=0.8)
+        plt.xlabel('Time', fontsize=12)
+        plt.ylabel('Inventory', fontsize=12)
+        plt.title(fig_name, fontsize=14, fontweight='bold')
+        plt.legend(loc='best', fontsize=10)
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+
+        if save_fig:
+            plt.savefig(save_path)
+        if show_fig:
+            plt.show()
+        plt.close()
