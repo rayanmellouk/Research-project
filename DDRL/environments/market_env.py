@@ -5,53 +5,43 @@ import numpy as np
 import torch
 
 class MarketEnv:
-    def __init__(self, phi, psi, state_dim, action_dim):
-        # phi: fonction de transition d'état (doit être différentiable, ex. via PyTorch ou autograd)
-        # psi: fonction de récompense (idem)
-        self.phi = phi
-        self.psi = psi
-        self.state_dim = state_dim
-        self.action_dim = action_dim
-        self.state = None
+    def __init__(self, rho_alpha, eta_alpha, risk_lambda, cost_C, horizon, device):
+        # description of the market environment 
+        self.rho_alpha = rho_alpha
+        self.eta_alpha = eta_alpha
+        self.risk_lambda = risk_lambda
+        self.cost_C = cost_C
+        self.horizon = horizon
+        self.device = device
 
-    def reset(self, initial_state):
-        self.state = initial_state
-        return self.state
-
-    def step(self, action):
-        ut = self.sample_ut() # Tirage de la variable aléatoire pour la transition
-        next_state = self.phi(self.state, action, ut)
-        vt = self.sample_vt() # Tirage pour la récompense
-        reward = self.psi(self.state, action, vt)
-        self.state = next_state
-        return next_state, reward
-
-    def sample_ut(self):
-        # ex: return np.random.normal(loc=0, scale=1, size=self.state_dim)
-        # adapter à ton setup !
-        pass
-
-    def sample_vt(self):
-        # ex: return np.random.normal(loc=0, scale=1, size=1)
-        # adapter à ton setup !
-        pass
-    
+    def reset(self, batch_size):
+        alpha_0 = torch.zeros(batch_size, 1, device=self.device)
+        l_w = torch.zeros(batch_size, 1, device=self.device)
+        state = torch.cat([alpha_0, l_w], dim=-1) #(batch, 2)
+        return state
 
     def transition(self, state, action, U):
-        # Fonction Φ : transition différentiable de l’état
-        return self.phi(state, action, U)
+        alpha_t = state[:,0:1] #(batch, 1)
+        lw_t = state[:,1:2] #(batch, 1)
+        alpha_next = self.rho_alpha * alpha_t + self.eta_alpha * U #(batch, 1)
+        lw_next = action #(batch, 1)
+        next_state = torch.cat([alpha_next, lw_next], dim = -1) #(batch, 2)
+        return next_state
 
-    def reward(self, state, action, V):
-        # Fonction Ψ : récompense différentiable
-        return self.psi(state, action, V)
+    def reward(self, state : torch.tensor, action : torch.tensor):
+        alpha_t, lw_t = state[:,0], state[:,1]
 
-    def generate_randomness(self, N, T):
+        signal = action*alpha_t
+        risk = 0.5*self.risk_lambda*(action**2) #quadratic
+        cost = self.cost_C*(torch.abs(action-lw_t)**2) #quadratic
+
+        r_t = signal - risk - cost
+        return r_t.squeeze(-1) #(batch,)
+    
+
+    def generate_randomness(self, batch_size):
         # Génère les variables U et V pour N trajectoires de longueur T
-        U = torch.randn(N, T, self.state_dim)   # Exemple avec bruit gaussien
-        V = torch.randn(N, T)
+        U = torch.randn(batch_size, self.horizon, self.state_dim)   # Exemple avec bruit gaussien
+        V = torch.randn(batch_size, self.horizon)
         return U, V
-
-    def initialize(self, N):
-        # Fournit N états initiaux simulés
-        return torch.zeros(N, self.state_dim)  # Exemple : tous zéros (adapter selon besoin)
 
