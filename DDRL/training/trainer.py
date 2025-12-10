@@ -55,7 +55,8 @@ def main():
             U_batch = U_dataset[indexes_batch, :, :]  # (batch_size, horizon, 1)
             loss, avg_return = agent.train_step(U_batch)
         print(f"Epoch {epoch+1}: loss {loss}, avg_return {avg_return}")
-
+        
+        agent.scheduler.step()
 
     # === Optional: save trained policy ===
     torch.save(agent.policy.state_dict(), "policy_monoscale_quadratic.pt")

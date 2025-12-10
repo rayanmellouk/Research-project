@@ -34,6 +34,7 @@ class DDRLAgent :
 
         self.policy = PolicyNet(state_dim=2, hidden_dim=hidden_dim).to(device)
         self.optimizer = optim.Adam(self.policy.parameters(), lr=lr)
+        self.scheduler = torch.optim.lr_scheduler.MultiplicativeLR(self.optimizer, lr_lambda=lambda epoch: 0.9)
 
     def rollout(self, U_batch : torch.tensor) : 
         batch_size = U_batch.shape[0]
@@ -58,6 +59,6 @@ class DDRLAgent :
 
         loss.backward()
 
-        self.optimizer.step()
+        self.optimizer.step()   
 
         return loss.item(), objective.item()
