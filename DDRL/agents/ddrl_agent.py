@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.optim as optim
 
 class PolicyNet(nn.Module) : 
-    def __init__(self, state_dim =2 , hidden_dim =64):
+    def __init__(self, state_dim =2 , hidden_dim =300):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(state_dim, hidden_dim),
@@ -24,7 +24,7 @@ class DDRLAgent :
         self,
         env: MarketEnv,
         horizon: int = 50,
-        hidden_dim: int = 64,
+        hidden_dim: int = 300,
         lr: float = 1e-3,
         device: str = "cpu",
     )   :
@@ -35,25 +35,23 @@ class DDRLAgent :
         self.policy = PolicyNet(state_dim=2, hidden_dim=hidden_dim).to(device)
         self.optimizer = optim.Adam(self.policy.parameters(), lr=lr)
 
-    def rollout(self, batch_size : int) : 
-        
+    def rollout(self, U_batch : torch.tensor) : 
+        batch_size = U_batch.shape[0]
         state = self.env.reset(batch_size) #(batch,2)
         CR_t = torch.zeros(batch_size, device = self.device)
 
-        for _ in range(self.horizon) : 
+        for t in range(self.horizon) : 
             action = self.policy(state)
             CR_t = CR_t + self.env.reward(state, action)
-            U = torch.randn(batch_size, 1, device=self.device)
-            state = self.env.transition(state, action, U)
+            state = self.env.transition(state, action, U_batch[:,t,:])
         
         return CR_t
 
-    def train_step(self, batch_size) : 
+    def train_step(self, U_batch : torch.tensor) : 
 
         self.optimizer.zero_grad()
 
-        cumulative_reward = self.rollout(batch_size)
-
+        cumulative_reward = self.rollout(U_batch)
         objective = cumulative_reward.mean()
 
         loss = -objective
