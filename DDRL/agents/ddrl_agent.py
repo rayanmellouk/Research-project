@@ -27,13 +27,14 @@ class DDRLAgent :
         hidden_dim: int = 300,
         lr: float = 1e-3,
         device: str = "cpu",
+        optimizer_str : str = "adam",
     )   :
         self.env = env
         self.horizon = horizon
         self.device = device
 
         self.policy = PolicyNet(state_dim=2, hidden_dim=hidden_dim).to(device)
-        self.optimizer = optim.Adam(self.policy.parameters(), lr=lr)
+        self.optimizer = optim.Adam(self.policy.parameters(), lr=lr) if optimizer_str == "adam" else optim.SGD(self.policy.parameters(), lr=lr)
         self.scheduler = torch.optim.lr_scheduler.MultiplicativeLR(self.optimizer, lr_lambda=lambda epoch: 0.9)
 
     def rollout(self, U_batch : torch.tensor) : 
