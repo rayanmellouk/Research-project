@@ -1,3 +1,6 @@
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 import torch
 from DDRL.environments.market_env import MarketEnv
 from DDRL.agents.ddrl_agent import DDRLAgent
@@ -11,7 +14,7 @@ def main():
     batch_size = 1024
     num_samples = int(1e6)
     steps_per_epoch = num_samples // batch_size
-    n_epochs = 50
+    n_epochs = 3 #For the simplest environmenents, we get very good results after the first epoch. (article)
 
     # Environment parameters (mono-scale alpha, quadratic risk & cost)
     rho_alpha = 0.9
