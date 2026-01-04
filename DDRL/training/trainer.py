@@ -29,7 +29,7 @@ def main():
     agent = DDRLAgent(
         env=env,
         horizon=horizon,
-        hidden_dim=64,
+        hidden_dim=300,
         lr=1e-3,
         device=device,
     )
