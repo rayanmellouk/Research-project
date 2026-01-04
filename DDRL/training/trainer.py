@@ -1,20 +1,23 @@
 import torch
 from DDRL.environments.market_env import MarketEnv
 from DDRL.agents.ddrl_agent import DDRLAgent
+from tqdm import tqdm
 
 def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     # === Hyperparameters ===
     horizon = 50
-    batch_size = 256
-    num_iterations = 1000
+    batch_size = 1024
+    num_samples = int(1e6)
+    steps_per_epoch = num_samples // batch_size
+    n_epochs = 50
 
     # Environment parameters (mono-scale alpha, quadratic risk & cost)
-    rho_alpha = 0.95
-    eta_alpha = 0.1
-    risk_lambda = 0.1
-    cost_C = 0.1
+    rho_alpha = 0.9
+    eta_alpha = 1.0
+    risk_lambda = 1.0
+    cost_C = 4.0
 
     # === Create environment and agent ===
     env = MarketEnv(
@@ -34,15 +37,26 @@ def main():
         device=device,
     )
 
-    # === Training loop ===
-    for it in range(1, num_iterations + 1):
-        loss, avg_return = agent.train_step(batch_size)
+    # === Step 1: pre-generate all noise U for the dataset ===
+    print("Generating U dataset...")
+    U_dataset, _ = env.generate_randomness(num_samples)   # on CPU
+    steps_per_epoch = num_samples // batch_size
+    print(f"Dataset size: {num_samples}, batch_size: {batch_size}, "
+          f"steps_per_epoch: {steps_per_epoch}")
 
-        if it % 50 == 0:
-            print(
-                f"Iter {it:4d} | loss = {loss:8.4f} | "
-                f"avg return = {avg_return:8.4f}"
-            )
+    # === Training loop ===
+
+    for epoch in range(n_epochs):
+        indexes = torch.randperm(num_samples)
+        print(f"Epoch {epoch + 1}/{n_epochs}")
+
+        for it in tqdm(range(1, steps_per_epoch + 1)):
+            indexes_batch = indexes[(it - 1) * batch_size : it * batch_size]
+            U_batch = U_dataset[indexes_batch, :, :]  # (batch_size, horizon, 1)
+            loss, avg_return = agent.train_step(U_batch)
+        print(f"Epoch {epoch+1}: loss {loss}, avg_return {avg_return}")
+        
+        agent.scheduler.step()
 
     # === Optional: save trained policy ===
     torch.save(agent.policy.state_dict(), "policy_monoscale_quadratic.pt")

@@ -29,19 +29,20 @@ class MarketEnv:
         return next_state
 
     def reward(self, state : torch.tensor, action : torch.tensor):
-        alpha_t, lw_t = state[:,0], state[:,1]
+        alpha_t, lw_t = state[:,0:1], state[:,1:2]
+        w_t = action
 
         signal = action*alpha_t
-        risk = 0.5*self.risk_lambda*(action**2) #quadratic
-        cost = self.cost_C*(torch.abs(action-lw_t)**2) #quadratic
+        risk = 0.5*self.risk_lambda*(w_t**2) #quadratic
+        cost = self.cost_C*(torch.abs(w_t-lw_t)**2) #quadratic
 
         r_t = signal - risk - cost
         return r_t.squeeze(-1) #(batch,)
     
 
-    def generate_randomness(self, batch_size):
+    def generate_randomness(self, num_samples : int) :
         # Génère les variables U et V pour N trajectoires de longueur T
-        U = torch.randn(batch_size, self.horizon, self.state_dim)   # Exemple avec bruit gaussien
-        V = torch.randn(batch_size, self.horizon)
+        U = torch.randn(num_samples, self.horizon, 1, device=self.device)   # Exemple avec bruit gaussien
+        V = torch.randn(num_samples, self.horizon, 1, device=self.device)
         return U, V
 
