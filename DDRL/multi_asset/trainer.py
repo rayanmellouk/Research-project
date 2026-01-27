@@ -1,3 +1,6 @@
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 import torch 
 from DDRL.multi_asset.market_env import MarketEnv
 from DDRL.multi_asset.ddrl_agent import DDRLAgent
@@ -61,6 +64,22 @@ def main():
         agent.scheduler.step()
 
     # === Optional: save trained policy ===
+     # Dans trainer.py, à la fin
+    checkpoint = {
+        'model_state_dict': agent.policy.state_dict(),
+        'market_params': {
+            'alpha_weights': alpha_weights,
+            'omega': omega,
+            'return_weights': return_weights,  # C'est la matrice B importante
+            'sigma': sigma,
+            'trader_risk': trader_risk,
+            'dealer_risk': dealer_risk,
+            'horizon': horizon
+        }
+    }
+    torch.save(checkpoint, "checkpoint_multiasset.pt")
+    print("Modèle et paramètres de marché sauvegardés dans checkpoint_multiasset.pt")
+
     torch.save(agent.policy.state_dict(), "policy_multiasset_quadratic.pt")
     print("Training complete, policy saved to policy_multiasset_quadratic.pt")
 
