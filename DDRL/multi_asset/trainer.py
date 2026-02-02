@@ -15,12 +15,12 @@ def main():
     batch_size = 1024
     num_samples = int(1e6)
     steps_per_epoch = num_samples // batch_size
-    n_epochs = 1
+    n_epochs = 10
     num_assets = 2
     num_alphas = 2
     return_weights, alpha_weights, sigma, omega = make_market_params(num_assets, num_alphas, device)
-    trader_risk = 1e-6
-    dealer_risk = 1e-6
+    trader_risk = 0.5
+    dealer_risk = 0.5
 
     # === Create environment and agent ===
     env = MarketEnv(
