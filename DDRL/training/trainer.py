@@ -5,7 +5,7 @@ import torch
 from DDRL.environments.market_env import MarketEnv
 from DDRL.agents.ddrl_agent import DDRLAgent
 from tqdm import tqdm
-
+print()
 def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
