@@ -60,10 +60,9 @@ class MarketEnv:
             dim=1
         )  # (batch,)   
 
-        cost = torch.sum(
-            (w_t - lw_t) * (self.cost_lambda @ (w_t - lw_t).T).T,
-            dim=1
-        )  # (batch,)
+        dw = w_t - lw_t                  # shape (B, N)
+        # coût quadratique: dw^T Λ dw, batché
+        cost = 0.5*torch.einsum("bi,ij,bj->b", dw, self.cost_lambda, dw)
 
         r_t = signal - risk - cost
         return r_t  #(batch,)
