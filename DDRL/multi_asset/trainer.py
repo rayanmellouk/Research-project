@@ -22,7 +22,7 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     # Market "hyperparameters"
-    horizon = 20000
+    horizon = 50
     batch_size = 1024
     num_samples = int(1e6)
     n_epochs = 1
