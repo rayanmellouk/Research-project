@@ -83,7 +83,7 @@ class DDRLAgent:
     def train_step(self, U_batch: torch.tensor):
 
         self.optimizer.zero_grad()
-
+        
         cumulative_reward = self.rollout(U_batch)
         objective = cumulative_reward.mean()
 

@@ -26,8 +26,8 @@ def main():
     batch_size = 1024
     num_samples = int(1e6)
     n_epochs = 1
-    num_assets = 2
-    num_alphas = 2
+    num_assets = 1
+    num_alphas = 1
     
     # Generate Matrices
     return_weights, alpha_weights, sigma, omega = make_market_params(
@@ -106,7 +106,7 @@ def main():
             "horizon": horizon,
         },
     }
-    torch.save(checkpoint, "checkpoint_multiasset.pt")
+    torch.save(checkpoint, "Monoasset_monosignal.pt")
     
     # ==========================================
     # === SANITY CHECK EXPORT START ===
@@ -180,8 +180,8 @@ def main():
 
     # Save to CSV
     df = pd.DataFrame(trajectory_data)
-    df.to_csv("debug_trajectory.csv", index=False)
-    print("Saved 'debug_trajectory.csv'")
+    df.to_csv("debug_monomono.csv", index=False)
+    print("Saved 'debug_monomono.csv'")
     print("==========================================")
 
 if __name__ == "__main__":
