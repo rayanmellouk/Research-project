@@ -84,7 +84,13 @@ def scale_B_to_target_pred_var(
 # ------------------ Example general initialization ------------------
 
 
-def make_market_params(num_assets: int, num_alphas: int, device: str):
+def make_market_params(num_assets: int, 
+                       num_alphas: int, 
+                       dealer_risk_range: tuple = (0.1, 1.0), 
+                       trader_risk_range: tuple = (0.1, 1.0),
+                       dealer_risk: float = None, 
+                       trader_risk: float = None, 
+                       device: str = "cpu"):
     dtype = torch.float32
 
     # --- A and Omega (predictor dynamics) ---
@@ -123,4 +129,111 @@ def make_market_params(num_assets: int, num_alphas: int, device: str):
     target_pred_std = float(asset_vol.mean().item()) * 0.1
     B = scale_B_to_target_pred_var(B, A, Omega, target_pred_std)
 
-    return B, A, Sigma, Omega
+    if dealer_risk is None:
+        lo = dealer_risk_range[0]
+        hi = dealer_risk_range[1]
+        dealer_risk = float((hi - lo) * torch.rand(1, device=device).item() + lo)
+    if trader_risk is None:
+        lo = trader_risk_range[0]
+        hi = trader_risk_range[1]
+        trader_risk = float((hi - lo) * torch.rand(1, device=device).item() + lo)
+
+    return B, A, Sigma, Omega, trader_risk, dealer_risk
+
+
+# ------------------ Variable environment helpers (Section 2.6) ------------------
+
+
+def zeta_dim(num_assets, num_alphas):
+    """Dimension of the flattened environment parameter vector ζ.
+    Layout: [A_flat(K²), B_flat(S*K), Sigma_flat(S²), L_omega_flat(K²), trader_risk(1), cost_lambda_flat(S²)]
+    """
+    S, K = num_assets, num_alphas
+    return 2 * K * K + S * K + 2 * S * S + 1
+
+
+def flatten_env_params(A, B, Sigma, Omega, trader_risk):
+    """Flatten raw environment matrices into a single ζ vector.
+
+    Precomputes L_omega (Cholesky of Omega) and cost_lambda (trader_risk * Sigma).
+    """
+    device, dtype = A.device, A.dtype
+    L_omega = torch.linalg.cholesky(Omega)
+    cost_lambda = trader_risk * Sigma
+    if torch.is_tensor(trader_risk):
+        tr = trader_risk.view(1).to(device=device, dtype=dtype)
+    else:
+        tr = torch.tensor([trader_risk], device=device, dtype=dtype)
+    return torch.cat([
+        A.flatten(),
+        B.flatten(),
+        Sigma.flatten(),
+        L_omega.flatten(),
+        tr,
+        cost_lambda.flatten(),
+    ])
+
+
+def unflatten_env_params_batch(zeta_batch, num_assets, num_alphas):
+    """Reconstruct batched env params from zeta_batch of shape (B, D_zeta)."""
+    S, K = num_assets, num_alphas
+    idx = 0
+    A = zeta_batch[:, idx:idx + K * K].reshape(-1, K, K); idx += K * K
+    B = zeta_batch[:, idx:idx + S * K].reshape(-1, S, K); idx += S * K
+    Sigma = zeta_batch[:, idx:idx + S * S].reshape(-1, S, S); idx += S * S
+    L_omega = zeta_batch[:, idx:idx + K * K].reshape(-1, K, K); idx += K * K
+    trader_risk = zeta_batch[:, idx]; idx += 1
+    cost_lambda = zeta_batch[:, idx:idx + S * S].reshape(-1, S, S); idx += S * S
+    return A, B, Sigma, L_omega, trader_risk, cost_lambda
+
+
+def sample_env_params_batch(batch_size, num_assets, num_alphas, device,
+                             half_life_range=(2.0, 30.0),
+                             asset_vol_range=(0.01, 0.04),
+                             factor_vol_range=(0.5, 1.5),
+                             pred_std_frac=0.1,
+                             b_init_scale=0.1,
+                             trader_risk_range=(0.1, 1.0),
+                             sigma_corr_rank=None,
+                             omega_corr_rank=None):
+    """Sample a batch of random environment parameters as flat ζ vectors.
+
+    Mirrors make_market_params: half-life-based persistence, full correlation
+    structure for Sigma and Omega, and B scaled to a target predictable-return
+    standard deviation.
+
+    Returns zeta_batch of shape (batch_size, D_zeta).
+    """
+    S, K = num_assets, num_alphas
+    dtype = torch.float32
+    sigma_rank = sigma_corr_rank if sigma_corr_rank is not None else min(3, S)
+    omega_rank = omega_corr_rank if omega_corr_rank is not None else min(5, K)
+
+    zetas = []
+    for _ in range(batch_size):
+        # --- A: half-life-based diagonal persistence ---
+        half_lives = half_life_range[0] + (half_life_range[1] - half_life_range[0]) * torch.rand(K, device=device, dtype=dtype)
+        rhos = 2.0 ** (-1.0 / half_lives)
+        A = make_A_diagonal(rhos)
+
+        # --- Omega: full correlation structure ---
+        fvol = factor_vol_range[0] + (factor_vol_range[1] - factor_vol_range[0]) * torch.rand(K, device=device, dtype=dtype)
+        C_omega = random_correlation(K, device=device, dtype=dtype, rank=omega_rank, eps=1e-3)
+        Omega = make_spd_from_vol_corr(fvol, C_omega, eps=1e-8)
+
+        # --- Sigma: full correlation structure ---
+        avol = asset_vol_range[0] + (asset_vol_range[1] - asset_vol_range[0]) * torch.rand(S, device=device, dtype=dtype)
+        C_sigma = random_correlation(S, device=device, dtype=dtype, rank=sigma_rank, eps=1e-3)
+        Sigma = make_spd_from_vol_corr(avol, C_sigma, eps=1e-8)
+
+        # --- B: random exposures scaled to target predictable-return std ---
+        B = b_init_scale * torch.randn(S, K, device=device, dtype=dtype)
+        target_pred_std = float(avol.mean().item()) * pred_std_frac
+        B = scale_B_to_target_pred_var(B, A, Omega, target_pred_std)
+
+        # --- trader_risk ---
+        tr_val = float(trader_risk_range[0] + (trader_risk_range[1] - trader_risk_range[0]) * torch.rand(1, device=device).item())
+
+        zetas.append(flatten_env_params(A, B, Sigma, Omega, tr_val))
+
+    return torch.stack(zetas, dim=0)

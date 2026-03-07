@@ -10,7 +10,7 @@ from tqdm import tqdm
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from DDRL.multi_asset_agent.market_env import MarketEnv
 from DDRL.multi_asset_agent.ddrl_agent import DDRLAgent
-from DDRL.multi_asset_agent.matrices import make_market_params
+from DDRL.multi_asset_agent.matrices import make_market_params, flatten_env_params
 
 def tensor_to_list(tensor):
     """Helper to convert tensors to standard python lists for JSON serialization"""
@@ -29,21 +29,10 @@ def main():
     num_assets = 1
     num_alphas = 1
     
-    # Generate Matrices
-    return_weights, alpha_weights, sigma, omega = make_market_params(
-        num_assets, num_alphas, device
-    )   # Les alpha weights sont la matrice diag des Phi et les return_weights sont la matrice B, sigma est la matrice de covariance des retours et omega celle des alphas
-    trader_risk = 0.5
-    dealer_risk = 0.5
-
-    # === Create environment and agent ===
+    # === Create environment with variable params (Section 2.6) ===
     env = MarketEnv(
-        alpha_weights=alpha_weights,
-        omega=omega,
-        return_weights=return_weights,
-        sigma=sigma,
-        trader_risk=trader_risk,
-        dealer_risk=dealer_risk,
+        num_alphas=num_alphas,
+        num_assets=num_assets,
         horizon=horizon,
         device=device,
     )
@@ -57,8 +46,6 @@ def main():
         init_weights=True,
     )
     
-    # ... [Print statements omitted for brevity] ...
-
     # === Generate dataset ===
     print("Generating U dataset...")
     # Note: Assuming env.generate_randomness exists or you handle it like in the snippet
@@ -83,43 +70,30 @@ def main():
             loss, avg_return = agent.train_step(U_batch)
 
             loss_val = (float(loss) if not torch.is_tensor(loss) else loss.detach().item())
-            pbar.set_postfix(avg_return=f"{float(avg_return):.3f}")
+            pbar.set_postfix(avg_return=f"{float(avg_return):.6f}")
             total_return += float(avg_return)
             running_loss += loss_val
             steps += 1
             
         avg_return_epoch = total_return / steps
         loss_epoch = running_loss / steps
-        print(f"Epoch {epoch+1}: loss {loss_epoch:.4f}, avg_return {avg_return_epoch:.3f}")
+        print(f"Epoch {epoch+1}: loss {loss_epoch:.8f}, avg_return {avg_return_epoch:.6f}")
         agent.scheduler.step()
 
-    # === Save Checkpoints ===
-    checkpoint = {
-        "model_state_dict": agent.policy.state_dict(),
-        "market_params": {
-            "alpha_weights": alpha_weights,
-            "omega": omega,
-            "return_weights": return_weights,
-            "sigma": sigma,
-            "trader_risk": trader_risk,
-            "dealer_risk": dealer_risk,
-            "horizon": horizon,
-        },
-    }
-    torch.save(checkpoint, "Monoasset_monosignal.pt")
+    # === Save Checkpoint (model only — env params are variable) ===
+    torch.save({"model_state_dict": agent.policy.state_dict()}, "variable_env_policy.pt")
     
     # ==========================================
-    # === SANITY CHECK EXPORT START ===
+    # === SANITY CHECK: evaluate on one fixed environment ===
     # ==========================================
-    print("\n--- Exporting Sanity Check Data ---")
+    print("\n--- Sanity Check on a specific environment ---")
 
-    # 1. Export Environment Parameters to JSON
-    # We export the exact matrices used in the env to verify against Analytical solution
-    
-    # Calculate Cost Lambda explicitly if it's not stored directly as a public attribute in all versions
-    # Based on your previous code: cost_lambda = trader_risk * sigma (Assuming Assumption A)
-    cost_lambda = env.cost_lambda if hasattr(env, 'cost_lambda') else (trader_risk * sigma)
+    B, A, Sigma, Omega, trader_risk, dealer_risk = make_market_params(
+        num_assets, num_alphas, device=device
+    )
+    zeta = flatten_env_params(A, B, Sigma, Omega, trader_risk).unsqueeze(0)  # (1, D_zeta)
 
+    cost_lambda = trader_risk * Sigma
     env_params = {
         "scalars": {
             "horizon": horizon,
@@ -129,11 +103,11 @@ def main():
             "num_alphas": num_alphas
         },
         "matrices": {
-            "alpha_weights": tensor_to_list(alpha_weights), # Matrix A (Mean reversion)
-            "return_weights": tensor_to_list(return_weights), # Matrix B (Prediction)
-            "sigma": tensor_to_list(sigma), # Covariance of Returns
-            "omega": tensor_to_list(omega), # Covariance of Alphas
-            "cost_lambda": tensor_to_list(cost_lambda) # Transaction Cost Matrix
+            "alpha_weights": tensor_to_list(A),
+            "return_weights": tensor_to_list(B),
+            "sigma": tensor_to_list(Sigma),
+            "omega": tensor_to_list(Omega),
+            "cost_lambda": tensor_to_list(cost_lambda)
         }
     }
 
@@ -141,47 +115,32 @@ def main():
         json.dump(env_params, f, indent=4)
     print("Saved 'debug_params.json'")
 
-    # 2. Export a Single Trajectory to CSV
-    # We run one episode without gradients to see what the agent actually does
-    
-    # Create a clean validation noise (Batch size = 1)
     U_test = torch.randn(1, horizon, num_alphas, device=device)
-    state = env.reset(1)
-    
+    state = env.reset(1, zeta=zeta)
     trajectory_data = []
 
     with torch.no_grad():
         for t in range(horizon):
-            # Extract current state components
-            # State structure: [alpha (num_alphas), last_position (num_assets)]
             current_alpha = state[0, :num_alphas].cpu().numpy()
-            current_position = state[0, num_alphas:].cpu().numpy()
-            
-            # Get Action from Agent
+            current_position = state[0, num_alphas:num_alphas + num_assets].cpu().numpy()
+
             action = agent.policy(state)
-            next_position = action[0].cpu().numpy() # This is w_t
-            
-            # Record Data
+            next_position = action[0].cpu().numpy()
+
             row = {"t": t}
-            # Add Alphas
             for i in range(num_alphas):
                 row[f"alpha_{i}"] = current_alpha[i]
-            # Add Current Holdings (before trading)
             for i in range(num_assets):
                 row[f"pos_prev_{i}"] = current_position[i]
-            # Add New Holdings (after trading)
             for i in range(num_assets):
                 row[f"pos_new_{i}"] = next_position[i]
-                
+
             trajectory_data.append(row)
-            
-            # Step Environment
             state = env.transition(state, action, U_test[:, t, :])
 
-    # Save to CSV
     df = pd.DataFrame(trajectory_data)
-    df.to_csv("debug_monomono.csv", index=False)
-    print("Saved 'debug_monomono.csv'")
+    df.to_csv("debug_variable_env.csv", index=False)
+    print("Saved 'debug_variable_env.csv'")
     print("==========================================")
 
 if __name__ == "__main__":

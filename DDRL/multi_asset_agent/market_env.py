@@ -1,71 +1,75 @@
 # Implémentation de l'article DDRL dans le cas multi-actifs, inspiré de GP.
+# Section 2.6: environment parameters ζ are part of the state.
 
-import numpy as np
 import torch
+from DDRL.multi_asset_agent.matrices import (
+    zeta_dim, unflatten_env_params_batch, sample_env_params_batch
+)
 
 class MarketEnv:
-    def __init__(self, 
-                 alpha_weights : torch.Tensor, 
-                 omega : torch.Tensor, 
-                 return_weights : torch.Tensor, 
-                 sigma : torch.Tensor, 
-                 trader_risk : torch.Tensor, 
-                 dealer_risk : torch.Tensor, 
-                 horizon : int, 
-                 device : str = "cpu"):
-        
-        # ALPHA
-        self.alpha_weights=alpha_weights
-        self.omega=omega
-        self.num_alphas = alpha_weights.shape[1]
-        # ASSETS
-        self.return_weights=return_weights
-        self.sigma= sigma
-        self.num_assets = return_weights.shape[1]
-        # COST MATRIX UNDER ASSUMPTION A
-        self.cost_lambda = trader_risk * sigma
-        # MARKET PARAMETERS
-        self.trader_risk=trader_risk
-        self.dealer_risk=dealer_risk  
-        self.horizon=horizon
-        self.device=device
+    def __init__(self, num_alphas, num_assets, horizon, device="cpu", param_ranges=None):
+        self.num_alphas = num_alphas
+        self.num_assets = num_assets
+        self.horizon = horizon
+        self.device = device
+        self.d_zeta = zeta_dim(num_assets, num_alphas)
+        self.param_ranges = param_ranges or {}
+
+    @property
+    def state_dim(self):
+        return self.num_alphas + self.num_assets + self.d_zeta
+
+    def _split_state(self, state):
+        K, S = self.num_alphas, self.num_assets
+        alpha = state[:, :K]
+        lw = state[:, K:K + S]
+        zeta = state[:, K + S:]
+        return alpha, lw, zeta
     
-    def reset(self, batch_size):
+    def reset(self, batch_size, zeta=None):
+        if zeta is None:
+            zeta = sample_env_params_batch(
+                batch_size, self.num_assets, self.num_alphas,
+                self.device, **self.param_ranges
+            )
         alpha_0 = torch.zeros(batch_size, self.num_alphas, device=self.device)
-        l_w = torch.zeros(batch_size, self.num_assets, device=self.device)
-        state = torch.cat([alpha_0, l_w], dim=-1) #(batch, num_alphas + num_assets)
+        lw_0 = torch.zeros(batch_size, self.num_assets, device=self.device)
+        state = torch.cat([alpha_0, lw_0, zeta], dim=-1)
         return state
 
     def transition(self, state, action, U):
-        alpha_t = state[:,0:self.num_alphas] #(batch, num_alphas)
-        lw_t = state[:,self.num_alphas:self.num_alphas+self.num_assets] #(batch, num_assets)
-
-        L = torch.linalg.cholesky(self.omega) 
-        alpha_next = alpha_t @ self.alpha_weights.T + U @ L.T #(batch, num_alphas)
-        lw_next = action #(batch, 2)
-        next_state = torch.cat([alpha_next, lw_next], dim = -1) #(batch, num_alphas + num_assets)
+        alpha_t, lw_t, zeta = self._split_state(state)
+        A, B, Sigma, L_omega, trader_risk, cost_lambda = unflatten_env_params_batch(
+            zeta, self.num_assets, self.num_alphas
+        )
+        # Batched: alpha_next = alpha_t @ A^T + U @ L^T
+        alpha_next = (torch.bmm(alpha_t.unsqueeze(1), A.transpose(1, 2)).squeeze(1)
+                      + torch.bmm(U.unsqueeze(1), L_omega.transpose(1, 2)).squeeze(1))
+        lw_next = action
+        next_state = torch.cat([alpha_next, lw_next, zeta], dim=-1)
         return next_state
 
-    def reward(self, state : torch.tensor, action : torch.tensor):
-        alpha_t, lw_t = state[:,0:self.num_alphas], state[:,self.num_alphas:self.num_alphas+self.num_assets] #(batch, num_alphas + num_assets)
-        w_t = action #(batch, num_assets)
+    def reward(self, state, action):
+        alpha_t, lw_t, zeta = self._split_state(state)
+        A, B, Sigma, L_omega, trader_risk, cost_lambda = unflatten_env_params_batch(
+            zeta, self.num_assets, self.num_alphas
+        )
+        w_t = action
 
-        signal = torch.sum(
-            w_t * (alpha_t @ self.return_weights.T),
-            dim=1
-        )  # (batch,)
+        # signal = w^T (B @ alpha)
+        pred_return = torch.bmm(alpha_t.unsqueeze(1), B.transpose(1, 2)).squeeze(1)  # (batch, S)
+        signal = torch.sum(w_t * pred_return, dim=1)  # (batch,)
 
-        risk = 0.5 * self.trader_risk * torch.sum(
-            w_t * (w_t @ self.sigma),
-            dim=1
-        )  # (batch,)   
+        # risk = 0.5 * trader_risk * w^T Sigma w
+        Sigma_w = torch.bmm(w_t.unsqueeze(1), Sigma).squeeze(1)  # (batch, S)
+        risk = 0.5 * trader_risk * torch.sum(w_t * Sigma_w, dim=1)  # (batch,)
 
-        dw = w_t - lw_t                  # shape (B, N)
-        # coût quadratique: dw^T Λ dw, batché
-        cost = 0.5*torch.einsum("bi,ij,bj->b", dw, self.cost_lambda, dw)
+        # cost = 0.5 * dw^T Lambda dw
+        dw = w_t - lw_t
+        Lambda_dw = torch.bmm(dw.unsqueeze(1), cost_lambda).squeeze(1)  # (batch, S)
+        cost = 0.5 * torch.sum(dw * Lambda_dw, dim=1)  # (batch,)
 
-        r_t = signal - risk - cost
-        return r_t  #(batch,)
+        return signal - risk - cost
 
     def generate_randomness(self, num_samples : int) :
         # Génère les variables U et V pour N trajectoires de longueur T

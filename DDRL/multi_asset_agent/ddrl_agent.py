@@ -9,10 +9,10 @@ import torch.optim as optim
 
 
 class PolicyNet(nn.Module):
-    def __init__(self, num_alphas, num_assets, hidden_dim=300, init_weights=True):
+    def __init__(self, state_dim, num_assets, hidden_dim=300, init_weights=True):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(num_alphas + num_assets, hidden_dim),
+            nn.Linear(state_dim, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
@@ -54,7 +54,7 @@ class DDRLAgent:
         self.device = device
 
         self.policy = PolicyNet(
-            num_alphas=env.num_alphas,
+            state_dim=env.state_dim,
             num_assets=env.num_assets,
             hidden_dim=hidden_dim,
             init_weights=init_weights,
@@ -68,9 +68,9 @@ class DDRLAgent:
             self.optimizer, lr_lambda=lambda epoch: 0.9
         )
 
-    def rollout(self, U_batch: torch.tensor):
+    def rollout(self, U_batch: torch.tensor, zeta=None):
         batch_size = U_batch.shape[0]
-        state = self.env.reset(batch_size)  # (batch,4)
+        state = self.env.reset(batch_size, zeta=zeta)
         CR_t = torch.zeros(batch_size, device=self.device)
 
         for t in range(self.horizon):
