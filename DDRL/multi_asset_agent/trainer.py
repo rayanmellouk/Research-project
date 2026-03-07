@@ -10,13 +10,11 @@ from tqdm import tqdm
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from DDRL.multi_asset_agent.market_env import MarketEnv
 from DDRL.multi_asset_agent.ddrl_agent import DDRLAgent
-from DDRL.multi_asset_agent.matrices import make_market_params, flatten_env_params
-
-def tensor_to_list(tensor):
-    """Helper to convert tensors to standard python lists for JSON serialization"""
-    if torch.is_tensor(tensor):
-        return tensor.detach().cpu().numpy().tolist()
-    return tensor
+from DDRL.multi_asset_agent.matrices import (
+    flatten_env_params, sample_env_params_batch,
+    unflatten_env_params_batch, save_env_params, load_env_params,
+    zeta_from_json,
+)
 
 def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -25,9 +23,9 @@ def main():
     horizon = 50
     batch_size = 1024
     num_samples = int(1e6)
-    n_epochs = 1
-    num_assets = 1
-    num_alphas = 1
+    n_epochs = 10
+    num_assets = 2
+    num_alphas = 2
     
     # === Create environment with variable params (Section 2.6) ===
     env = MarketEnv(
@@ -35,17 +33,31 @@ def main():
         num_assets=num_assets,
         horizon=horizon,
         device=device,
+        param_ranges = dict(
+            half_life_range = (5.0, 40.0),        # predictor persistence (days)
+            asset_vol_range = (0.01, 0.04),       # daily asset volatility (1–4%)
+            factor_vol_range = (0.6, 1.5),        # signal volatility scaling
+            pred_std_frac = 0.5,                  # fraction of asset vol
+            b_init_scale = 0.1,                   # initial signal loading
+            trader_risk_range = (0.2, 1.5),       # risk aversion parameter
+        ),
     )
 
     agent = DDRLAgent(
         env=env,
         horizon=horizon,
-        hidden_dim=300,
-        lr=1e-4,
+        hidden_dim=512,
+        lr=1e-3,
         device=device,
         init_weights=True,
     )
     
+    # zeta_fixed = sample_env_params_batch(
+    #     1, num_assets, num_alphas, device,
+    #     **env.param_ranges
+    # )  # (1, D_zeta) - one fixed environment
+    # zeta_fixed = zeta_fixed.expand(batch_size, -1)  # (batch_size, D_zeta), all identical
+
     # === Generate dataset ===
     print("Generating U dataset...")
     # Note: Assuming env.generate_randomness exists or you handle it like in the snippet
@@ -67,7 +79,7 @@ def main():
             indexes_batch = indexes[(it - 1) * batch_size : it * batch_size]
             U_batch = U_dataset[indexes_batch, :, :] 
 
-            loss, avg_return = agent.train_step(U_batch)
+            loss, avg_return = agent.train_step(U_batch, zeta = None) # zeta_fixed can be used for sanity check 
 
             loss_val = (float(loss) if not torch.is_tensor(loss) else loss.detach().item())
             pbar.set_postfix(avg_return=f"{float(avg_return):.6f}")
@@ -88,31 +100,22 @@ def main():
     # ==========================================
     print("\n--- Sanity Check on a specific environment ---")
 
-    B, A, Sigma, Omega, trader_risk, dealer_risk = make_market_params(
-        num_assets, num_alphas, device=device
+    # Sample one environment from the training distribution
+    zeta = sample_env_params_batch(
+        1, num_assets, num_alphas, device,
+        **env.param_ranges
+    )  # (1, D_zeta)
+
+    # Recover raw matrices for saving
+    A, B, Sigma, L_omega, trader_risk, cost_lambda = unflatten_env_params_batch(zeta, num_assets, num_alphas)
+    Omega = L_omega @ L_omega.transpose(1, 2)
+
+    # Save to JSON for reproducible re-evaluation later
+    save_env_params(
+        "debug_params.json",
+        A[0], B[0], Sigma[0], Omega[0], trader_risk[0],
+        num_assets, num_alphas, horizon,
     )
-    zeta = flatten_env_params(A, B, Sigma, Omega, trader_risk).unsqueeze(0)  # (1, D_zeta)
-
-    cost_lambda = trader_risk * Sigma
-    env_params = {
-        "scalars": {
-            "horizon": horizon,
-            "trader_risk": trader_risk,
-            "dealer_risk": dealer_risk,
-            "num_assets": num_assets,
-            "num_alphas": num_alphas
-        },
-        "matrices": {
-            "alpha_weights": tensor_to_list(A),
-            "return_weights": tensor_to_list(B),
-            "sigma": tensor_to_list(Sigma),
-            "omega": tensor_to_list(Omega),
-            "cost_lambda": tensor_to_list(cost_lambda)
-        }
-    }
-
-    with open("debug_params.json", "w") as f:
-        json.dump(env_params, f, indent=4)
     print("Saved 'debug_params.json'")
 
     U_test = torch.randn(1, horizon, num_alphas, device=device)

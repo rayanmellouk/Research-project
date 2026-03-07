@@ -31,7 +31,7 @@ class MarketEnv:
             zeta = sample_env_params_batch(
                 batch_size, self.num_assets, self.num_alphas,
                 self.device, **self.param_ranges
-            )
+            ).detach() # The market parameters are static for each trajectory
         alpha_0 = torch.zeros(batch_size, self.num_alphas, device=self.device)
         lw_0 = torch.zeros(batch_size, self.num_assets, device=self.device)
         state = torch.cat([alpha_0, lw_0, zeta], dim=-1)
