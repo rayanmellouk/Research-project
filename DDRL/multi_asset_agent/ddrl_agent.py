@@ -3,6 +3,7 @@ import os
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from DDRL.multi_asset_agent.market_env import MarketEnv
+from DDRL.multi_asset_agent.matrices import unflatten_env_params_batch
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -20,10 +21,12 @@ class PolicyNet(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_dim, num_assets),
         )
-        # Zeta normalization buffers (identity until calibrated)
+        # Normalization buffers (identity until calibrated)
         zeta_len = state_dim - num_alphas - num_assets
         self.register_buffer('zeta_mean', torch.zeros(zeta_len))
         self.register_buffer('zeta_std', torch.ones(zeta_len))
+        self.register_buffer('alpha_std', torch.ones(num_alphas))
+        self.register_buffer('lw_std', torch.ones(num_assets))
         if init_weights:
             self.apply(self._init_weights)
 
@@ -39,17 +42,63 @@ class PolicyNet(nn.Module):
         nn.init.uniform_(last_layer.weight, -1e-5, 1e-5)  # Near zero weights
         nn.init.constant_(last_layer.bias, 0)  # Zero bias
 
-    def forward(self, state: torch.tensor):
-        K_S = self.num_alphas + self.num_assets
-        alpha_lw = state[:, :K_S]
+    def _per_sample_scales(self, zeta):
+        K, S = self.num_alphas, self.num_assets
+        A, B, Sigma, L_omega, trader_risk, _ = unflatten_env_params_batch(zeta, S, K)
+
+        rhos = torch.diagonal(A, dim1=-2, dim2=-1)
+        Omega = L_omega @ L_omega.transpose(1, 2)
+        omega_diag = torch.diagonal(Omega, dim1=-2, dim2=-1)
+        alpha_std = torch.sqrt((omega_diag / (1.0 - rhos ** 2)).clamp_min(1e-12))
+
+        denom = 1.0 - rhos.unsqueeze(2) * rhos.unsqueeze(1)
+        Sigma_f = Omega / denom
+        gamma_Sigma = trader_risk.unsqueeze(1).unsqueeze(2) * Sigma
+        inv_gS_B = torch.linalg.solve(gamma_Sigma, B)
+        pos_var = inv_gS_B @ Sigma_f @ inv_gS_B.transpose(1, 2)
+        lw_std = torch.sqrt(torch.diagonal(pos_var, dim1=-2, dim2=-1).clamp_min(1e-12))
+
+        return alpha_std.clamp_min(1e-8), lw_std.clamp_min(1e-8)
+
+    def forward(self, state):
+        K = self.num_alphas
+        K_S = K + self.num_assets
+        alpha = state[:, :K]
+        lw = state[:, K:K_S]
         zeta = state[:, K_S:]
+
+        # Per-sample scales, detached (no gradient through normalization)
+        alpha_std, lw_std = self._per_sample_scales(zeta.detach())
+
+        alpha_norm = alpha / alpha_std
+        lw_norm = lw / lw_std
         zeta_norm = (zeta - self.zeta_mean) / self.zeta_std
-        return self.net(torch.cat([alpha_lw, zeta_norm], dim=-1))
+
+        raw = self.net(torch.cat([alpha_norm, lw_norm, zeta_norm], dim=-1))
+        return raw * lw_std  # rescale output back to position space
+
 
     def calibrate_zeta_norm(self, zeta_sample: torch.Tensor):
         """Set normalization stats from a batch of raw zeta vectors."""
         self.zeta_mean = zeta_sample.mean(dim=0)
         self.zeta_std = zeta_sample.std(dim=0).clamp_min(1e-8)
+
+        K, S = self.num_alphas, self.num_assets
+        A, B, Sigma, L_omega, trader_risk, _ = unflatten_env_params_batch(zeta_sample, S, K)
+
+        rhos = torch.diagonal(A, dim1=-2, dim2=-1)
+        Omega = L_omega @ L_omega.transpose(1, 2)
+        omega_diag = torch.diagonal(Omega, dim1=-2, dim2=-1)
+        alpha_std_batch = torch.sqrt((omega_diag / (1.0 - rhos ** 2)).clamp_min(1e-12))
+        self.alpha_std = alpha_std_batch.mean(dim=0).clamp_min(1e-8)
+
+        sigma_diag = torch.diagonal(Sigma, dim1=-2, dim2=-1)
+        denom = 1.0 - rhos.unsqueeze(2) * rhos.unsqueeze(1)
+        Sigma_f = Omega / denom
+        pred_var = B @ Sigma_f @ B.transpose(1, 2)
+        pred_std = torch.sqrt(torch.diagonal(pred_var, dim1=-2, dim2=-1).clamp_min(1e-12))
+        lw_std_batch = (pred_std / (trader_risk.unsqueeze(1) * sigma_diag)).clamp_min(1e-8)
+        self.lw_std = lw_std_batch.mean(dim=0).clamp_min(1e-8)
 
 
 class DDRLAgent:

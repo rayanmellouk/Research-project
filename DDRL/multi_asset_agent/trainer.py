@@ -23,7 +23,7 @@ def main():
     horizon = 50
     batch_size = 1024
     num_samples = int(1e6)
-    n_epochs = 10
+    n_epochs = 5
     num_assets = 2
     num_alphas = 2
     
@@ -34,19 +34,20 @@ def main():
         horizon=horizon,
         device=device,
         param_ranges = dict(
-            half_life_range = (5.0, 40.0),        # predictor persistence (days)
-            asset_vol_range = (0.01, 0.04),       # daily asset volatility (1–4%)
-            factor_vol_range = (0.6, 1.5),        # signal volatility scaling
+            half_life_range = (10.0, 25.0),       # predictor persistence (days)
+            asset_vol_range = (0.015, 0.03),      # daily asset volatility (1.5–3%)
+            factor_vol_range = (0.8, 1.2),        # signal volatility scaling
             pred_std_frac = 0.5,                  # fraction of asset vol
             b_init_scale = 0.1,                   # initial signal loading
-            trader_risk_range = (0.2, 1.5),       # risk aversion parameter
+            trader_risk_range = (0.5, 1.0),       # risk aversion parameter
         ),
+        cost_type="quadratic",  # or "linear"
     )
 
     agent = DDRLAgent(
         env=env,
         horizon=horizon,
-        hidden_dim=512,
+        hidden_dim=300,
         lr=1e-3,
         device=device,
         init_weights=True,
@@ -93,7 +94,7 @@ def main():
         agent.scheduler.step()
 
     # === Save Checkpoint (model only — env params are variable) ===
-    torch.save({"model_state_dict": agent.policy.state_dict()}, "variable_env_policy.pt")
+    torch.save({"model_state_dict": agent.policy.state_dict()}, "norm_test_policy.pt")
     
     # ==========================================
     # === SANITY CHECK: evaluate on one fixed environment ===

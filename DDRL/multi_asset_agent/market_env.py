@@ -7,13 +7,14 @@ from DDRL.multi_asset_agent.matrices import (
 )
 
 class MarketEnv:
-    def __init__(self, num_alphas, num_assets, horizon, device="cpu", param_ranges=None):
+    def __init__(self, num_alphas, num_assets, horizon, device="cpu", param_ranges=None, cost_type="quadratic"):
         self.num_alphas = num_alphas
         self.num_assets = num_assets
         self.horizon = horizon
         self.device = device
         self.d_zeta = zeta_dim(num_assets, num_alphas)
         self.param_ranges = param_ranges or {}
+        self.cost_type = cost_type  
 
     @property
     def state_dim(self):
@@ -66,8 +67,12 @@ class MarketEnv:
 
         # cost = 0.5 * dw^T Lambda dw
         dw = w_t - lw_t
-        Lambda_dw = torch.bmm(dw.unsqueeze(1), cost_lambda).squeeze(1)  # (batch, S)
-        cost = 0.5 * torch.sum(dw * Lambda_dw, dim=1)  # (batch,)
+        if self.cost_type == "quadratic":
+            Lambda_dw = torch.bmm(dw.unsqueeze(1), cost_lambda).squeeze(1)  # (batch, S)
+            cost = 0.5 * torch.sum(dw * Lambda_dw, dim=1)  # (batch,)
+        elif self.cost_type == "linear":
+            lambda_diag = torch.diagonal(cost_lambda, dim1=-2, dim2=-1)  # (batch, S)
+            cost = torch.sum(lambda_diag * torch.abs(dw), dim=1)  # (batch,)
 
         return signal - risk - cost
 
